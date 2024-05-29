@@ -1,6 +1,10 @@
-const express = require('express');
+import bodyParser from 'body-parser'; //解JSON
+import linebot from 'linebot'; 
+import fetch from 'node-fetch';//發HTTP Request到DC的WebHook
+import express from 'express';//架api server
+import { MongoClient, ServerApiVersion } from 'mongodb';//mongoDB driver
+//express初始化
 const app = express();	// app為express的應用實例
-const bodyParser = require('body-parser');
 app.use(bodyParser.json());//用來解析req的body
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');// 設置允許的來源
@@ -9,13 +13,11 @@ app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Credentials', 'true');// 允許跨域請求攜帶認證資訊（如 cookie）
   next();// 繼續處理下一個中介軟體或路由處理函式
 });
-
-const { MongoClient, ServerApiVersion } = require("mongodb");
+//mongodb初始化
 const uri = "mongodb://127.0.0.1:27017";//localhost會出錯
 const client = new MongoClient(uri);
 let database;
 let coll;
-
 async function connectDatabase() {
   try {
     await client.connect();
@@ -26,34 +28,106 @@ async function connectDatabase() {
     console.error("Error connecting to the database:", error);
   }
 }
-
 connectDatabase();//只建立一次連接並不斷開 而非每次都重新連
+//Line初始化
+var bot = linebot({//lineBot相關參數
+  channelId: '2005467883',
+  channelSecret: '4e75337199cbd8bb6b292d2678c671a8',
+  channelAccessToken: 'mYW2cmBTpkHIaiQV216KDkAVQfNiLh84XibUWT3OupBxeWXW5J6QFtX1L6SqHpvFZVwfBPGBGlEXqaIykhPZ6jlNVGS1+U2ylAk1i+RkeK2JOfY8nIeQ7gna1lHabWiMPjYkTaJQ+8pvpp9FoifxFQdB04t89/1O/w1cDnyilFU='
+});
+const lineIds = ['U29c3c8da576de06fdb8e81c58be9bb00'];//第一個ID崔士豪
+function sendToLineBot(text) {//發送linebot訊息
+  const message = {
+    type: 'text',
+    text: text
+  };
+  lineIds.forEach(lineId => { bot.push(lineId, message) });
+}
+//DC初始化
+const webhookUrl = 'https://discord.com/api/webhooks/1245358746981367869/L-gUH9n-GRFVTECVKsihwTBTdqUwlTVJp4C8iZU66151ZjnyEUR0GGY4IBlUNV3M6Kri';
+function sendToDiscord(text) {//發到DC頻道
+  const message = {
+    content: text
+  };
+  fetch(webhookUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(message),
+  })
+}
+//全域變量
+let lineNotify = false;
+let dcNotify = false;
+let maxTemp = 999;
+let avgTemp = 999;
 
-app.get('/',function(req,res){//http://localhost:3406/會看到的資料
+
+
+//api方法
+app.get('/', function (req, res) {//http://localhost:3406/會看到的資料
   res.status(200).send('JS server is running');
 })
 
-app.post('/api/iti/',function(req,res){//新增 完成
+app.post('/api/iti/', function (req, res) {//新增一筆量測數據 完成
   const sensingData = req.body; //從request中獲取新增的文件
   const temperature = sensingData.temperature;
   const timestamp = new Date();//ISO格式
+  function calculateStats(temperatures) {//算平均跟最高溫
+    let sum = 0;
+    let max = -Infinity;
 
-  async function run() {
-      try {
-        const result = await coll.insertOne({temperature: temperature,date: timestamp}); //插入文檔並獲取結果
-        res.status(200).send(result); //發送結果給客戶端
-        //console.log(result);
-      } 
-      catch (error) {
-        console.error("Error inserting data:", error);
-        res.status(500).send('Error inserting data');
-        console.log(error);
+    for (let i = 0; i < temperatures.length; i++) {
+      sum += temperatures[i];
+      if (temperatures[i] > max) {
+        max = temperatures[i];
       }
+    }
+
+    const avg = sum / temperatures.length;
+    return { average: avg, max: max };
   }
-  run(); //執行異步函數
+
+  async function insert() {//塞進DB
+    try {
+      const result = await coll.insertOne({ temperature: temperature, date: timestamp }); //插入文檔並獲取結果
+      res.status(200).send(result); //發送結果給客戶端
+      //console.log(result);
+    }
+    catch (error) {
+      console.error("Error inserting data:", error);
+      res.status(500).send('Error inserting data');
+      console.log(error);
+    }
+  }
+  insert(); //執行異步函數
+  const result = calculateStats(temperature);
+  if (lineNotify)//linebot通知
+  {
+    if (result.max >= maxTemp)
+      sendToLineBot(`目前最高溫：${result.max}已超過設定值${maxTemp}`);
+    if (result.average >= avgTemp)
+      sendToLineBot(`目前平均溫：${result.max}已超過設定值${maxTemp}`);
+  }
+  if (dcNotify)//DC通知
+  {
+    if (result.max >= maxTemp)
+    sendToDiscord(`目前最高溫：${result.max}已超過設定值${maxTemp}`);
+    if (result.average >= avgTemp)
+    sendToLineBot(`目前平均溫：${result.max}已超過設定值${maxTemp}`);
+  }
 })
 
-app.delete('/', function(req, res) {
+app.post('/api/notify/', function (req, res) {//推播地址
+  const notifyData = req.body;
+  if (notifyData.lineNotify)
+    lineNotify == notifyData.lineNotify;
+  if (notifyData.dcNotify)
+    dcNotify == notifyData.dcNotify;
+})
+
+app.delete('/', function (req, res) {//刪除全部資料
   async function run() {
     try {
       const result = await coll.deleteMany({}); // 刪除集合中的所有文檔
@@ -66,10 +140,10 @@ app.delete('/', function(req, res) {
   run(); // 執行異步函數
 });
 
-app.get('/api/iti/', function(req, res) {
+app.get('/api/iti/all', function (req, res) {//取得全部資料
   const startDate = new Date(req.query.start);
   const endDate = new Date(req.query.end);
-  
+
   if (isNaN(startDate) || isNaN(endDate)) {// 檢查日期範圍的有效性
     res.status(400).send('Invalid date format');
     return;
@@ -84,7 +158,7 @@ app.get('/api/iti/', function(req, res) {
 
   async function run() {
     try {
-      const result = await coll.find(query,{}).toArray(); // 執行查詢並獲取結果
+      const result = await coll.find(query, {}).toArray(); // 執行查詢並獲取結果
       const data = result.map(item => ({
         temperature: item.temperature,
         time: item.date
@@ -98,7 +172,7 @@ app.get('/api/iti/', function(req, res) {
   run(); // 執行異步函數
 });
 
-app.get('/api/iti/new', function(req, res) {
+app.get('/api/iti/new', function (req, res) {//取得最新資料
   async function run() {
     try {
       const result = await coll.find().sort({ date: -1 }).limit(1).toArray(); // 查詢並按日期排序，只取最新的一筆
@@ -119,6 +193,48 @@ app.get('/api/iti/new', function(req, res) {
   run(); // 執行異步函數
 });
 
-app.listen('3406',function(){
+app.get('/api/iti/pmaxandavg', function (req, res) {//最大值與平均值 一個點
+  async function run() {
+    try {
+      const result = await coll.find().sort({ date: -1 }).limit(1).toArray(); // 查詢並按日期排序，只取最新的一筆
+      if (result.length === 0) {
+        res.status(404).send('No data found');
+        return;
+      }
+      const latestData = {
+        temperature: result[0].temperature,
+        time: result[0].date
+      };
+      res.json(latestData); // 回傳最新的結果
+    } catch (error) {
+      console.error('Error retrieving data:', error);
+      res.status(500).send('Error retrieving data');
+    }
+  }
+  run(); // 執行異步函數
+});
+
+app.get('/api/iti/imaxandavg', function (req, res) {//最大值與平均值 一張圖
+  async function run() {
+    try {
+      const result = await coll.find().sort({ date: -1 }).limit(1).toArray(); // 查詢並按日期排序，只取最新的一筆
+      if (result.length === 0) {
+        res.status(404).send('No data found');
+        return;
+      }
+      const latestData = {
+        temperature: result[0].temperature,
+        time: result[0].date
+      };
+      res.json(latestData); // 回傳最新的結果
+    } catch (error) {
+      console.error('Error retrieving data:', error);
+      res.status(500).send('Error retrieving data');
+    }
+  }
+  run(); // 執行異步函數
+});
+
+app.listen('3406', function () {
   console.log('IOT Server Running...')//顯示在下面視窗
 })
