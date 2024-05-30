@@ -60,8 +60,8 @@ function sendToDiscord(text) {//發到DC頻道
 //全域變量
 let lineNotify = false;
 let dcNotify = false;
-let maxTemp = 999;
-let avgTemp = 999;
+let maxTemp = 300;
+let avgTemp = 300;
 
 
 
@@ -86,6 +86,7 @@ app.post('/api/iti/', function (req, res) {//新增一筆量測數據 完成
     }
 
     const avg = sum / temperatures.length;
+    console.log(avg);
     return { average: avg, max: max };
   }
 
@@ -108,23 +109,34 @@ app.post('/api/iti/', function (req, res) {//新增一筆量測數據 完成
     if (result.max >= maxTemp)
       sendToLineBot(`目前最高溫：${result.max}已超過設定值${maxTemp}`);
     if (result.average >= avgTemp)
-      sendToLineBot(`目前平均溫：${result.max}已超過設定值${maxTemp}`);
+      sendToLineBot(`目前平均溫：${result.average}已超過設定值${avgTemp}`);
   }
   if (dcNotify)//DC通知
   {
     if (result.max >= maxTemp)
     sendToDiscord(`目前最高溫：${result.max}已超過設定值${maxTemp}`);
     if (result.average >= avgTemp)
-    sendToLineBot(`目前平均溫：${result.max}已超過設定值${maxTemp}`);
+    sendToDiscord(`目前平均溫：${result.average}已超過設定值${avgTemp}`);
   }
 })
 
-app.post('/api/notify/', function (req, res) {//推播地址
+app.post('/api/notify/', function (req, res) {//推播開關
   const notifyData = req.body;
-  if (notifyData.lineNotify)
-    lineNotify == notifyData.lineNotify;
-  if (notifyData.dcNotify)
-    dcNotify == notifyData.dcNotify;
+  console.log(req.body);
+  lineNotify = notifyData.lineNotify;
+  dcNotify = notifyData.dcNotify;
+  maxTemp = notifyData.maxTemp;
+  avgTemp = notifyData.avgTemp;
+  res.status(200).send(' setting success');
+})
+app.get('/api/notify/', function (req, res) {//取得推播設定內容
+  const Data = {
+    lineNotify : lineNotify,
+    dcNotify : dcNotify,
+    maxTemp : maxTemp,
+    avgTemp : avgTemp
+  };
+  res.json(Data);
 })
 
 app.delete('/', function (req, res) {//刪除全部資料
@@ -182,7 +194,7 @@ app.get('/api/iti/new', function (req, res) {//取得最新資料
       }
       const latestData = {
         temperature: result[0].temperature,
-        time: result[0].date
+        time: new Date(result[0].date).getTime()
       };
       res.json(latestData); // 回傳最新的結果
     } catch (error) {
