@@ -1,5 +1,5 @@
 import bodyParser from 'body-parser'; //解JSON
-import linebot from 'linebot'; 
+import linebot from 'linebot';
 import fetch from 'node-fetch';//發HTTP Request到DC的WebHook
 import express from 'express';//架api server
 import { MongoClient, ServerApiVersion } from 'mongodb';//mongoDB driver
@@ -60,8 +60,8 @@ function sendToDiscord(text) {//發到DC頻道
 //全域變量
 let lineNotify = false;
 let dcNotify = false;
-let maxTemp = 300;
-let avgTemp = 300;
+let maxTemp = 30;
+let avgTemp = 30;
 
 
 
@@ -114,9 +114,9 @@ app.post('/api/iti/', function (req, res) {//新增一筆量測數據 完成
   if (dcNotify)//DC通知
   {
     if (result.max >= maxTemp)
-    sendToDiscord(`目前最高溫：${result.max}已超過設定值${maxTemp}`);
+      sendToDiscord(`目前最高溫：${result.max}已超過設定值${maxTemp}`);
     if (result.average >= avgTemp)
-    sendToDiscord(`目前平均溫：${result.average}已超過設定值${avgTemp}`);
+      sendToDiscord(`目前平均溫：${result.average}已超過設定值${avgTemp}`);
   }
 })
 
@@ -131,10 +131,10 @@ app.post('/api/notify/', function (req, res) {//推播開關
 })
 app.get('/api/notify/', function (req, res) {//取得推播設定內容
   const Data = {
-    lineNotify : lineNotify,
-    dcNotify : dcNotify,
-    maxTemp : maxTemp,
-    avgTemp : avgTemp
+    lineNotify: lineNotify,
+    dcNotify: dcNotify,
+    maxTemp: maxTemp,
+    avgTemp: avgTemp
   };
   res.json(Data);
 })
@@ -205,45 +205,154 @@ app.get('/api/iti/new', function (req, res) {//取得最新資料
   run(); // 執行異步函數
 });
 
-app.get('/api/iti/pmaxandavg', function (req, res) {//最大值與平均值 一個點
+app.get('/api/timeZone', function (req, res) {//時間區間
   async function run() {
     try {
-      const result = await coll.find().sort({ date: -1 }).limit(1).toArray(); // 查詢並按日期排序，只取最新的一筆
-      if (result.length === 0) {
-        res.status(404).send('No data found');
-        return;
+      // 聚合管道
+      const pipeline = [
+        {
+          $group: {
+            _id: null,
+            earliest: { $min: "$date" },
+            latest: { $max: "$date" }
+          }
+        },
+        {
+          $project: {
+            _id: 0,
+            earliest: 1,
+            latest: 1
+          }
+        }
+      ];
+
+      // 執行聚合管道
+      const result = await coll.aggregate(pipeline).toArray();
+      if (result.length > 0) {
+        const timeRange = result[0];
+        res.json({
+          earliest: new Date(timeRange.earliest).getTime(),
+          latest: new Date(timeRange.latest).getTime()
+        });
+      } else {
+        res.status(404).json({ message: 'No data found' });
       }
-      const latestData = {
-        temperature: result[0].temperature,
-        time: result[0].date
-      };
-      res.json(latestData); // 回傳最新的結果
-    } catch (error) {
-      console.error('Error retrieving data:', error);
-      res.status(500).send('Error retrieving data');
+    } catch (err) {
+      console.error('Error executing aggregation pipeline:', err);
+      res.status(500).json({ message: 'Internal Server Error' });
     }
   }
   run(); // 執行異步函數
 });
 
-app.get('/api/iti/imaxandavg', function (req, res) {//最大值與平均值 一張圖
+app.get('/api/analyze', function (req, res) {//最大值與平均值 一張圖
+  const mode = req.query.mode;
+  console.log(mode);
   async function run() {
     try {
-      const result = await coll.find().sort({ date: -1 }).limit(1).toArray(); // 查詢並按日期排序，只取最新的一筆
-      if (result.length === 0) {
-        res.status(404).send('No data found');
-        return;
+      let pipeline = [];
+      switch (mode) {
+        case "maxp":
+          pipeline = [
+            {
+              $unwind: "$temperature"
+            },
+            {
+              $group: {
+                _id: null,
+                max_temperature: {
+                  $max: "$temperature"
+                }
+              }
+            },
+            {
+              $project: {
+                _id: 0,
+                max_temperature: 1
+              }
+            }
+          ];
+          break;
+        case "avgp":
+          pipeline = [
+            {
+              $unwind: "$temperature"
+            },
+            {
+              $group: {
+                _id: null,
+                average_temperature: {
+                  $avg: "$temperature"
+                }
+              }
+            },
+            {
+              $project: {
+                _id: 0,
+                average_temperature: 1
+              }
+            }
+          ];
+          break;
+        case "maxf":
+        case "avgf":
+          pipeline = [
+            {
+              $unwind: {
+                path: "$temperature",
+                includeArrayIndex: "index"
+              }
+            },
+            {
+              $group: {
+                _id: "$index",
+                max_temperature: {
+                  $max: "$temperature"
+                },
+                avg_temperature: {
+                  $avg: "$temperature"
+                }
+              }
+            },
+            {
+              $sort: {
+                _id: 1
+              }
+            },
+            {
+              $group: {
+                _id: null,
+                max_temperatures: {
+                  $push: "$max_temperature"
+                },
+                avg_temperatures: {
+                  $push: "$avg_temperature"
+                }
+              }
+            },
+            {
+              $project: {
+                _id: 0,
+                max_temperatures: 1,
+                avg_temperatures: 1
+              }
+            }
+          ];
+          break;
+
       }
-      const latestData = {
-        temperature: result[0].temperature,
-        time: result[0].date
-      };
-      res.json(latestData); // 回傳最新的結果
-    } catch (error) {
-      console.error('Error retrieving data:', error);
-      res.status(500).send('Error retrieving data');
+      const result = await coll.aggregate(pipeline).toArray();
+      if (result.length > 0) {
+        const data = result[0];
+        res.json(data);
+      } else {
+        res.status(404).json({ message: 'No data found' });
+      }
+    } catch (err) {
+      console.error('Error executing aggregation pipeline:', err);
+      res.status(500).json({ message: 'Internal Server Error' });
     }
-  }
+  };
   run(); // 執行異步函數
 });
 
