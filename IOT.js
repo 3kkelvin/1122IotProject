@@ -66,11 +66,10 @@ let avgTemp = 30;
 
 
 //api方法
-app.get('/', function (req, res) {//http://localhost:3406/會看到的資料
+app.get('/', function (req, res) {//確定server狀態
   res.status(200).send('JS server is running');
 })
-
-app.post('/api/iti/', function (req, res) {//新增一筆量測數據 完成
+app.post('/api/iti/', function (req, res) {//新增一筆量測數據
   const sensingData = req.body; //從request中獲取新增的文件
   const temperature = sensingData.temperature;
   const timestamp = new Date();//ISO格式
@@ -119,7 +118,6 @@ app.post('/api/iti/', function (req, res) {//新增一筆量測數據 完成
       sendToDiscord(`目前平均溫：${result.average}已超過設定值${avgTemp}`);
   }
 })
-
 app.post('/api/notify/', function (req, res) {//推播開關
   const notifyData = req.body;
   console.log(req.body);
@@ -138,7 +136,6 @@ app.get('/api/notify/', function (req, res) {//取得推播設定內容
   };
   res.json(Data);
 })
-
 app.delete('/', function (req, res) {//刪除全部資料
   async function run() {
     try {
@@ -151,7 +148,6 @@ app.delete('/', function (req, res) {//刪除全部資料
   }
   run(); // 執行異步函數
 });
-
 app.get('/api/iti/all', function (req, res) {//取得全部資料
   const startDate = new Date(req.query.start);
   const endDate = new Date(req.query.end);
@@ -183,7 +179,6 @@ app.get('/api/iti/all', function (req, res) {//取得全部資料
   }
   run(); // 執行異步函數
 });
-
 app.get('/api/iti/new', function (req, res) {//取得最新資料
   async function run() {
     try {
@@ -204,7 +199,6 @@ app.get('/api/iti/new', function (req, res) {//取得最新資料
   }
   run(); // 執行異步函數
 });
-
 app.get('/api/timeZone', function (req, res) {//時間區間
   async function run() {
     try {
@@ -244,8 +238,7 @@ app.get('/api/timeZone', function (req, res) {//時間區間
   }
   run(); // 執行異步函數
 });
-
-app.get('/api/analyze', function (req, res) {//最大值與平均值 一張圖
+app.get('/api/analyze', function (req, res) {//統計資料
   const mode = req.query.mode;
   console.log(mode);
   async function run() {
